@@ -39,3 +39,74 @@ body {
 .animate-pulse-ring {
   animation: pulse-ring 2s infinite;
 }
+
+/* ... โค้ดเดิม ... */
+
+/* --- Custom React Datepicker Theme (White/Red) --- */
+.react-datepicker-wrapper {
+  width: auto;
+}
+
+.react-datepicker {
+  font-family: inherit;
+  border: 1px solid rgba(0, 0, 0, 0.05) !important;
+  border-radius: 1rem !important;
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.15);
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+
+.react-datepicker__header {
+  background-color: #fff !important;
+  border-bottom: 1px solid #f3f4f6 !important;
+  padding-top: 1rem !important;
+}
+
+.react-datepicker__current-month {
+  color: #1f2937 !important;
+  font-weight: 800 !important;
+  font-size: 1rem !important;
+  margin-bottom: 0.5rem;
+}
+
+.react-datepicker__day-name {
+  color: #9ca3af !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  font-size: 0.7rem !important;
+}
+
+.react-datepicker__day {
+  color: #374151;
+  font-weight: 500;
+  border-radius: 999px !important;
+  transition: all 0.2s;
+  margin: 0.2rem !important;
+}
+
+.react-datepicker__day:hover {
+  background-color: #fee2e2 !important; /* Red-100 */
+  color: #dc2626 !important; /* Red-600 */
+}
+
+.react-datepicker__day--selected, 
+.react-datepicker__day--keyboard-selected {
+  background-color: #dc2626 !important; /* Red-600 */
+  color: white !important;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+.react-datepicker__day--today {
+  font-weight: 900 !important;
+  color: #dc2626;
+}
+
+.react-datepicker__navigation-icon::before {
+  border-color: #dc2626 !important;
+  border-width: 2px 2px 0 0 !important;
+}
+
+.react-datepicker__triangle {
+  display: none !important;
+}
