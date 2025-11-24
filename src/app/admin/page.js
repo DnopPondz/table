@@ -6,7 +6,7 @@ import {
   User, Shield, Users, Bell, CheckCircle, XCircle, LogOut, Lock, Unlock, 
   LayoutDashboard, List, UserPlus, Trash2, DollarSign, TrendingUp, 
   PieChart, History, Calendar as CalendarIcon, Clock, Timer, StopCircle, PlayCircle,
-  Edit, Save, X, Search, Filter, Grid, Plus, Receipt
+  Edit, Save, X, Search, Filter, Grid, Plus, Receipt, Settings
 } from 'lucide-react';
 
 import DatePicker from "react-datepicker";
@@ -56,6 +56,10 @@ export default function AdminPage() {
   // My Attendance (For Worker)
   const [myAttendance, setMyAttendance] = useState(null);
   const [workDuration, setWorkDuration] = useState("0h 0m 0s");
+
+  // Settings State
+  const [settings, setSettings] = useState([]);
+  const [settingsLoading, setSettingsLoading] = useState(false);
 
   // Configuration
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
@@ -192,6 +196,39 @@ export default function AdminPage() {
   const fetchLogs = async () => { try { const res = await axios.get(`${API_URL}/logs?date=${formatDateForAPI(logDate)}`, authHeaders); setLogs(res.data); } catch (e) { checkAuthError(e); } };
   const fetchStaffStatus = async () => { try { const res = await axios.get(`${API_URL}/attendance/today`, authHeaders); setStaffStatus(res.data); const u = await axios.get(`${API_URL}/users`, authHeaders); setUserList(u.data); } catch (e) { checkAuthError(e); } };
   const fetchMyAttendance = async () => { try { const res = await axios.get(`${API_URL}/attendance/me`, authHeaders); setMyAttendance(res.data); } catch (e) { checkAuthError(e); } };
+
+  // Settings Fetcher
+  useEffect(() => {
+    if (activeTab === 'settings' && token) {
+      fetchSettings();
+    }
+  }, [activeTab, token]);
+
+  const fetchSettings = async () => {
+    try {
+      setSettingsLoading(true);
+      const res = await axios.get(`${API_URL}/settings`);
+      setSettings(res.data);
+      setSettingsLoading(false);
+    } catch (e) {
+      console.error(e);
+      setSettingsLoading(false);
+    }
+  };
+
+  const updateSettings = async (e) => {
+    e.preventDefault();
+    try {
+      await axios.put(`${API_URL}/settings`, settings, authHeaders);
+      alert('Settings Updated!');
+    } catch (e) {
+      alert('Error updating settings');
+    }
+  };
+
+  const handleSettingChange = (key, value) => {
+    setSettings(prev => prev.map(s => s.key === key ? { ...s, value: value } : s));
+  };
 
   // --- Actions ---
   const handleLogin = async (e) => {
@@ -375,6 +412,9 @@ export default function AdminPage() {
                     </button>
                     <button onClick={() => setActiveTab('users')} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition whitespace-nowrap ${activeTab === 'users' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                         <Users size={16}/> Staff
+                    </button>
+                    <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition whitespace-nowrap ${activeTab === 'settings' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                        <Settings size={16}/> Settings
                     </button>
                     </>
                 )}
@@ -630,6 +670,38 @@ export default function AdminPage() {
                     <thead className="bg-white text-gray-400 border-b uppercase"><tr><th className="p-4">Time</th><th className="p-4">Queue</th><th className="p-4">Total</th><th className="p-4 text-right">Status</th></tr></thead>
                     <tbody>{logs.map(log=>(<tr key={log._id} className="hover:bg-gray-50"><td className="p-4">{formatTime(log.createdAt)}</td><td className="p-4 font-bold">#{log.queueNumber}</td><td className="p-4">{log.totalPrice}฿</td><td className="p-4 text-right"><StatusBadge status={log.status}/></td></tr>))}</tbody>
                 </table>
+            </div>
+        )}
+
+        {/* --- TAB: SETTINGS (Admin) --- */}
+        {activeTab === 'settings' && role === 'admin' && (
+            <div className="max-w-2xl mx-auto animate-in fade-in zoom-in duration-300">
+                <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+                    <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2"><Settings size={24}/> System Configuration</h3>
+                    {settingsLoading ? (
+                        <p className="text-gray-500">Loading settings...</p>
+                    ) : (
+                        <form onSubmit={updateSettings} className="space-y-6">
+                            {settings.map((setting) => (
+                                <div key={setting.key}>
+                                    <label className="block text-sm font-bold text-gray-500 uppercase mb-2">
+                                        {setting.label || setting.key}
+                                    </label>
+                                    <input
+                                        type={setting.type === 'number' ? 'number' : 'text'}
+                                        value={setting.value}
+                                        onChange={(e) => handleSettingChange(setting.key, e.target.value)}
+                                        className="w-full p-4 border border-gray-200 rounded-xl font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-black bg-gray-50"
+                                        required
+                                    />
+                                </div>
+                            ))}
+                            <button className="w-full py-4 bg-black text-white rounded-xl font-bold text-lg hover:bg-gray-800 transition shadow-lg flex items-center justify-center gap-2">
+                                <Save size={20} /> Save Changes
+                            </button>
+                        </form>
+                    )}
+                </div>
             </div>
         )}
 
