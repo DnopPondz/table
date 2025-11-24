@@ -12,6 +12,7 @@ const Queue = require('./models/Queue');
 const User = require('./models/User');
 const Table = require('./models/Table');
 const Shift = require('./models/Shift');
+const Setting = require('./models/Setting');
 
 dotenv.config();
 const app = express();
@@ -33,12 +34,35 @@ io.on('connection', (socket) => {
 // --- CONFIGURATION ---
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "buffet_secret_key_123"; 
-const PRICE_PER_HEAD = 399;
 
 // --- DATABASE ---
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB Connected'))
+  .then(() => {
+    console.log('MongoDB Connected');
+    initSettings();
+  })
   .catch(err => console.log(err));
+
+// --- SETTINGS INITIALIZATION ---
+const initSettings = async () => {
+  try {
+    const defaultSettings = [
+      { key: 'pricePerHead', value: 399, label: 'Price Per Head', type: 'number' },
+      { key: 'restaurantName', value: 'Buffet POS', label: 'Restaurant Name', type: 'string' },
+      { key: 'vatRate', value: 7, label: 'VAT Rate (%)', type: 'number' }
+    ];
+
+    for (const setting of defaultSettings) {
+      const exists = await Setting.findOne({ key: setting.key });
+      if (!exists) {
+        await Setting.create(setting);
+        console.log(`Initialized setting: ${setting.key}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error initializing settings:', error);
+  }
+};
 
 // --- HELPERS ---
 const getTodayDateStr = () => {
@@ -85,6 +109,34 @@ const authMiddleware = (req, res, next) => {
 
 // ================= ROUTES =================
 
+// --- SETTINGS ---
+app.get('/api/settings', async (req, res) => {
+  try {
+    const settings = await Setting.find({});
+    // Convert array to object for easier frontend consumption, or just return list
+    // Let's return the list so we can edit by key
+    res.json(settings);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/settings', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: "Admin only" });
+  try {
+    const updates = req.body; // Expecting array of { key, value } or object
+    // If it's an array
+    if (Array.isArray(updates)) {
+      for (const update of updates) {
+         await Setting.findOneAndUpdate({ key: update.key }, { value: update.value });
+      }
+    } else {
+       // Single update
+       const { key, value } = updates;
+       await Setting.findOneAndUpdate({ key }, { value });
+    }
+    res.json({ message: "Settings updated" });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- QUEUE ---
 app.get('/api/queue', async (req, res) => {
   await broadcastUpdate();
@@ -98,9 +150,14 @@ app.get('/api/queue', async (req, res) => {
 app.post('/api/queue/add', authMiddleware, async (req, res) => {
   const { customerCount } = req.body;
   const { start, end } = getTodayRange();
+
+  // Fetch Price dynamically
+  const priceSetting = await Setting.findOne({ key: 'pricePerHead' });
+  const pricePerHead = priceSetting ? parseFloat(priceSetting.value) : 399;
+
   const lastQueue = await Queue.findOne({ createdAt: { $gte: start, $lt: end } }).sort({ queueNumber: -1 });
   const nextNumber = lastQueue ? lastQueue.queueNumber + 1 : 1;
-  const newQueue = new Queue({ queueNumber: nextNumber, customerCount, totalPrice: customerCount * PRICE_PER_HEAD });
+  const newQueue = new Queue({ queueNumber: nextNumber, customerCount, totalPrice: customerCount * pricePerHead });
   await newQueue.save();
   broadcastUpdate();
   res.json(newQueue);
