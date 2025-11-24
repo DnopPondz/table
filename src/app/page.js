@@ -1,12 +1,28 @@
 "use client";
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { io } from 'socket.io-client';
+import { Monitor, Maximize2, Minimize2 } from 'lucide-react'; // Icons for TV Mode
 
 export default function ClientQueue() {
   const [data, setData] = useState({ currentQueue: null, waitingQueues: [], totalToday: 0 });
-  const API_URL = "http://localhost:5000/api"; // ชี้ไปที่ Backend Express
+  const [isTVMode, setIsTVMode] = useState(false); // Toggle TV Mode
+  
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+  const SOCKET_URL = "http://localhost:5000"; // Socket URL (usually root of API)
+
+  // --- Voice Notification ---
+  const speak = (text) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'th-TH'; // ภาษาไทย
+      utterance.rate = 0.9; // ความเร็ว
+      window.speechSynthesis.speak(utterance);
+    }
+  };
 
   useEffect(() => {
+    // 1. Initial Fetch
     const fetchData = async () => {
       try {
         const res = await axios.get(`${API_URL}/queue`);
@@ -14,14 +30,85 @@ export default function ClientQueue() {
       } catch (err) { console.error("API Error:", err); }
     };
     fetchData();
-    const interval = setInterval(fetchData, 2000); // Update every 2s
-    return () => clearInterval(interval);
+
+    // 2. Setup Socket
+    const socket = io(SOCKET_URL);
+
+    socket.on('update-data', (newData) => {
+      // เช็คว่ามีการเปลี่ยนเลขคิวปัจจุบันหรือไม่ เพื่อแจ้งเตือนเสียง
+      setData((prevData) => {
+        if (newData.currentQueue?.queueNumber !== prevData.currentQueue?.queueNumber) {
+          if (newData.currentQueue) {
+            speak(`ขอเชิญหมายเลข ${newData.currentQueue.queueNumber} ค่ะ`);
+          }
+        }
+        return newData;
+      });
+    });
+
+    return () => socket.disconnect();
   }, []);
 
   const { currentQueue, waitingQueues, totalToday } = data;
 
+  // --- TV MODE UI ---
+  if (isTVMode) {
+    return (
+      <div className="min-h-screen bg-black text-white flex flex-col p-10 overflow-hidden relative">
+        <button onClick={() => setIsTVMode(false)} className="absolute top-4 right-4 p-2 bg-gray-800 rounded-full opacity-20 hover:opacity-100 transition"><Minimize2 size={24}/></button>
+        
+        {/* Header */}
+        <header className="flex justify-between items-end border-b-2 border-gray-700 pb-6 mb-10">
+            <h1 className="text-5xl font-black tracking-wider text-red-500">NOW SERVING</h1>
+            <div className="text-right">
+                <p className="text-2xl text-gray-400">Total Today</p>
+                <p className="text-4xl font-bold">{totalToday}</p>
+            </div>
+        </header>
+
+        <div className="flex flex-1 gap-12">
+            {/* Left: Current Queue (Huge) */}
+            <div className="w-2/3 flex flex-col items-center justify-center bg-gray-900 rounded-3xl border-4 border-red-600 relative shadow-2xl shadow-red-900/50">
+                <p className="text-4xl font-bold text-gray-400 uppercase mb-8">Queue Number</p>
+                {currentQueue ? (
+                    <>
+                        <span className="text-[250px] font-black leading-none text-white drop-shadow-lg">
+                            {String(currentQueue.queueNumber).padStart(3, '0')}
+                        </span>
+                        <span className="text-5xl mt-8 bg-red-600 px-8 py-2 rounded-xl font-bold">
+                            {currentQueue.customerCount} Person(s)
+                        </span>
+                    </>
+                ) : (
+                    <span className="text-9xl font-bold text-gray-600">--</span>
+                )}
+            </div>
+
+            {/* Right: Waiting List */}
+            <div className="w-1/3 bg-gray-900 rounded-3xl p-8 border border-gray-800 flex flex-col">
+                <h2 className="text-4xl font-bold text-yellow-500 mb-8 border-b border-gray-700 pb-4">NEXT QUEUE</h2>
+                <div className="space-y-4 flex-1 overflow-hidden">
+                    {waitingQueues.slice(0, 4).map((q, i) => (
+                        <div key={q._id} className="flex justify-between items-center bg-gray-800 p-6 rounded-2xl border border-gray-700">
+                            <span className="text-6xl font-bold text-white">#{String(q.queueNumber).padStart(3, '0')}</span>
+                            <span className="text-2xl text-gray-400 font-medium">{q.customerCount} ppl</span>
+                        </div>
+                    ))}
+                    {waitingQueues.length === 0 && <p className="text-3xl text-gray-600 text-center mt-20">No queues waiting</p>}
+                </div>
+                <div className="mt-auto pt-4 border-t border-gray-700">
+                    <p className="text-center text-2xl text-gray-500">Please wait specifically for your number</p>
+                </div>
+            </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- NORMAL MOBILE UI ---
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gradient-to-br from-gray-100 to-gray-200 overflow-hidden relative">
+      <button onClick={() => setIsTVMode(true)} className="absolute top-4 right-4 p-2 bg-white rounded-full shadow-md text-gray-500 hover:text-red-600 transition z-50"><Monitor size={20}/></button>
       
       {/* Background Decor */}
       <div className="absolute top-10 left-10 w-72 h-72 bg-red-300 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob"></div>

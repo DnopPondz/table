@@ -1,11 +1,12 @@
 "use client";
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { io } from 'socket.io-client'; // เพิ่ม Socket.io
 import { 
   User, Shield, Users, Bell, CheckCircle, XCircle, LogOut, Lock, Unlock, 
   LayoutDashboard, List, UserPlus, Trash2, DollarSign, TrendingUp, 
   PieChart, History, Calendar as CalendarIcon, Clock, Timer, StopCircle, PlayCircle,
-  Edit, Save, X, Search, Filter
+  Edit, Save, X, Search, Filter, Grid, Plus, Receipt
 } from 'lucide-react';
 
 import DatePicker from "react-datepicker";
@@ -30,13 +31,22 @@ export default function AdminPage() {
   const [logs, setLogs] = useState([]);
   const [logDate, setLogDate] = useState(new Date());
   
+  // **NEW: Table Management Data**
+  const [tables, setTables] = useState([]);
+  const [newTable, setNewTable] = useState({ tableNumber: '', capacity: 4 });
+  
+  // **NEW: Shift Data**
+  const [shifts, setShifts] = useState([]);
+  const [cashInDrawer, setCashInDrawer] = useState('');
+  const [shiftNote, setShiftNote] = useState('');
+
   // Users & Attendance Data
   const [users, setUsers] = useState([]); 
   const [userList, setUserList] = useState([]); 
   const [staffStatus, setStaffStatus] = useState([]); 
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'worker' });
   
-  // Search & Filter State (NEW)
+  // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('');
 
   // Edit Time State
@@ -47,7 +57,9 @@ export default function AdminPage() {
   const [myAttendance, setMyAttendance] = useState(null);
   const [workDuration, setWorkDuration] = useState("0h 0m 0s");
 
-  const API_URL = "http://localhost:5000/api";
+  // Configuration
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+  const SOCKET_URL = "http://localhost:5000";
 
   // --- Helpers ---
   const formatDateForAPI = (date) => {
@@ -78,6 +90,36 @@ export default function AdminPage() {
     return `${hours}h ${minutes}m ${seconds}s`;
   };
 
+  // **NEW: Print Ticket Function**
+  const printQueueTicket = (queue) => {
+    const printWindow = window.open('', '', 'width=300,height=400');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Queue Ticket</title>
+          <style>
+            body { font-family: monospace; text-align: center; padding: 20px; }
+            h1 { font-size: 40px; margin: 0; }
+            p { margin: 5px 0; font-size: 14px; }
+            .date { font-size: 10px; margin-top: 20px; color: #666; }
+          </style>
+        </head>
+        <body>
+          <p>Welcome to Buffet</p>
+          <p>YOUR QUEUE NUMBER</p>
+          <h1>#${String(queue.queueNumber).padStart(3, '0')}</h1>
+          <p>${queue.customerCount} Person(s)</p>
+          <p class="date">${new Date().toLocaleString('th-TH')}</p>
+          <script>
+            window.print();
+            window.close();
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   // --- Initialization ---
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
@@ -88,24 +130,28 @@ export default function AdminPage() {
     }
   }, []);
 
-  // --- Real-time Fetching ---
+  // --- Real-time Fetching & Socket ---
   useEffect(() => {
     if (!token) return;
     
+    // Initial Fetch
     fetchQueue(); 
-    const interval = setInterval(fetchQueue, 3000); 
+    if (activeTab === 'tables') fetchTables();
+    if (activeTab === 'shift') { fetchReports(); fetchShifts(); }
+    if (activeTab === 'logs') fetchLogs(); 
+    if (activeTab === 'users' && !editingId) fetchStaffStatus(); 
+    if (role === 'worker') fetchMyAttendance();
 
-    if (role === 'admin') {
-        if (activeTab === 'dashboard') fetchReports();
-        if (activeTab === 'logs') fetchLogs(); 
-        if (activeTab === 'users' && !editingId) fetchStaffStatus(); 
-    }
-    
-    if (role === 'worker') {
-        fetchMyAttendance();
-    }
+    // **Socket Listener**
+    const socket = io(SOCKET_URL);
+    socket.on('update-data', (data) => {
+      if (data.currentQueue || data.waitingQueues) {
+        setQueueData({ currentQueue: data.currentQueue, waitingQueues: data.waitingQueues || [] });
+      }
+      if (data.tables) setTables(data.tables);
+    });
 
-    return () => clearInterval(interval);
+    return () => socket.disconnect();
   }, [token, activeTab, logDate, editingId]); 
 
   // --- WORK TIMER LOGIC ---
@@ -139,30 +185,13 @@ export default function AdminPage() {
   };
 
   // --- API Fetchers ---
-  const fetchQueue = async () => {
-    try { const res = await axios.get(`${API_URL}/queue`); setQueueData(res.data); } catch (e) { console.error(e); }
-  };
-  const fetchReports = async () => {
-    try { const res = await axios.get(`${API_URL}/reports`, authHeaders); setReports(res.data); } catch (e) { checkAuthError(e); }
-  };
-  const fetchLogs = async () => {
-    try { 
-        const dateStr = formatDateForAPI(logDate);
-        const res = await axios.get(`${API_URL}/logs?date=${dateStr}`, authHeaders); 
-        setLogs(res.data); 
-    } catch (e) { checkAuthError(e); }
-  };
-  const fetchStaffStatus = async () => {
-    try {
-      const res = await axios.get(`${API_URL}/attendance/today`, authHeaders);
-      setStaffStatus(res.data);
-      const resUsers = await axios.get(`${API_URL}/users`, authHeaders);
-      setUserList(resUsers.data);
-    } catch (e) { checkAuthError(e); }
-  };
-  const fetchMyAttendance = async () => {
-    try { const res = await axios.get(`${API_URL}/attendance/me`, authHeaders); setMyAttendance(res.data); } catch (e) { checkAuthError(e); }
-  };
+  const fetchQueue = async () => { try { const res = await axios.get(`${API_URL}/queue`); setQueueData(res.data); } catch (e) { console.error(e); } };
+  const fetchTables = async () => { try { const res = await axios.get(`${API_URL}/tables`); setTables(res.data); } catch (e) { console.error(e); } };
+  const fetchReports = async () => { try { const res = await axios.get(`${API_URL}/reports`, authHeaders); setReports(res.data); } catch (e) { checkAuthError(e); } };
+  const fetchShifts = async () => { try { const res = await axios.get(`${API_URL}/shift/history`, authHeaders); setShifts(res.data); } catch (e) { checkAuthError(e); } };
+  const fetchLogs = async () => { try { const res = await axios.get(`${API_URL}/logs?date=${formatDateForAPI(logDate)}`, authHeaders); setLogs(res.data); } catch (e) { checkAuthError(e); } };
+  const fetchStaffStatus = async () => { try { const res = await axios.get(`${API_URL}/attendance/today`, authHeaders); setStaffStatus(res.data); const u = await axios.get(`${API_URL}/users`, authHeaders); setUserList(u.data); } catch (e) { checkAuthError(e); } };
+  const fetchMyAttendance = async () => { try { const res = await axios.get(`${API_URL}/attendance/me`, authHeaders); setMyAttendance(res.data); } catch (e) { checkAuthError(e); } };
 
   // --- Actions ---
   const handleLogin = async (e) => {
@@ -181,17 +210,47 @@ export default function AdminPage() {
   // Queue Actions
   const addQueue = async () => {
     if(loading) return; setLoading(true);
-    try { await axios.post(`${API_URL}/queue/add`, { customerCount }, authHeaders); await fetchQueue(); setCustomerCount(1); } 
-    catch(e) { alert('Error'); } setLoading(false);
+    try { 
+        const res = await axios.post(`${API_URL}/queue/add`, { customerCount }, authHeaders); 
+        printQueueTicket(res.data); 
+        setCustomerCount(1); 
+    } 
+    catch(e) { alert('Error'); } 
+    setLoading(false);
   };
   const nextQueue = async () => {
     if(loading) return; setLoading(true);
-    try { await axios.put(`${API_URL}/queue/next`, {}, authHeaders); await fetchQueue(); } 
+    try { await axios.put(`${API_URL}/queue/next`, {}, authHeaders); } 
     catch(e) { alert(e.response?.data?.message); } setLoading(false);
   };
   const updateQueue = async (id, status) => {
     if(!confirm(`Confirm ${status}?`)) return;
-    try { await axios.put(`${API_URL}/queue/update/${id}`, { status }, authHeaders); await fetchQueue(); } catch(e) { alert('Error'); }
+    try { await axios.put(`${API_URL}/queue/update/${id}`, { status }, authHeaders); } catch(e) { alert('Error'); }
+  };
+  const clearQueues = async () => {
+    if(!confirm('Clear ALL waiting queues?')) return;
+    try { await axios.delete(`${API_URL}/queue/reset`, authHeaders); } catch(e) { alert('Error'); }
+  };
+
+  // Table Actions
+  const createTable = async (e) => {
+    e.preventDefault();
+    try { await axios.post(`${API_URL}/tables`, newTable, authHeaders); setNewTable({tableNumber:'', capacity:4}); alert('Table Created'); fetchTables(); } 
+    catch(e){alert('Error');}
+  };
+  const assignTable = async (tableId, queueId = null) => {
+    try { await axios.put(`${API_URL}/tables/${tableId}/assign`, { queueId }, authHeaders); fetchTables(); } 
+    catch(e){alert('Error');}
+  };
+  const deleteTable = async (id) => {
+    if(confirm('Delete Table?')) try { await axios.delete(`${API_URL}/tables/${id}`, authHeaders); fetchTables(); } catch(e){}
+  };
+
+  // Shift Actions
+  const closeShift = async () => {
+    if(!confirm('Close Shift now?')) return;
+    try { await axios.post(`${API_URL}/shift/close`, { cashInDrawer, note: shiftNote }, authHeaders); alert('Shift Closed!'); fetchShifts(); setCashInDrawer(''); setShiftNote(''); } 
+    catch(e){alert('Error');}
   };
 
   // User Actions
@@ -302,6 +361,12 @@ export default function AdminPage() {
                 )}
                 {role === 'admin' && (
                     <>
+                    <button onClick={() => setActiveTab('tables')} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition whitespace-nowrap ${activeTab === 'tables' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                        <Grid size={16}/> Tables
+                    </button>
+                    <button onClick={() => setActiveTab('shift')} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition whitespace-nowrap ${activeTab === 'shift' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                        <Receipt size={16}/> Shift
+                    </button>
                     <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition whitespace-nowrap ${activeTab === 'dashboard' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                         <TrendingUp size={16}/> Reports
                     </button>
@@ -375,7 +440,18 @@ export default function AdminPage() {
                             </div>
                         ) : ( <div className="bg-white p-8 rounded-2xl shadow-sm border border-dashed text-center text-gray-400">No Active Queue</div> )}
                         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-                            <div className="p-4 bg-gray-50 border-b flex justify-between font-bold text-gray-700"><span>Waiting List</span><span>{queueData.waitingQueues.length} Waiting</span></div>
+                            <div className="p-4 bg-gray-50 border-b flex justify-between font-bold text-gray-700">
+                                <span>Waiting List</span>
+                                <div className="flex gap-4">
+                                    <span>{queueData.waitingQueues.length} Waiting</span>
+                                    {/* Reset Button */}
+                                    {role === 'admin' && (
+                                        <button onClick={clearQueues} className="text-xs text-red-400 hover:text-red-600 underline">
+                                            Reset List
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
                             <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
                                 {queueData.waitingQueues.map(q => (
                                     <div key={q._id} className="p-4 flex justify-between items-center hover:bg-gray-50">
@@ -389,6 +465,114 @@ export default function AdminPage() {
                 </div>
             )}
             </>
+        )}
+
+        {/* --- TAB: TABLES (UPDATED UI) --- */}
+        {activeTab === 'tables' && role === 'admin' && (
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 animate-in fade-in zoom-in duration-300">
+                {/* Create Table */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-fit">
+                    <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2"><Plus size={20}/> New Table</h3>
+                    <form onSubmit={createTable} className="space-y-4">
+                        <input className="w-full p-2 border rounded-lg bg-gray-50" placeholder="Table No. (e.g. T1)" value={newTable.tableNumber} onChange={e=>setNewTable({...newTable, tableNumber:e.target.value})} required/>
+                        <input type="number" className="w-full p-2 border rounded-lg bg-gray-50" placeholder="Capacity" value={newTable.capacity} onChange={e=>setNewTable({...newTable, capacity:e.target.value})} required/>
+                        <button className="w-full py-2 bg-black text-white rounded-lg font-bold hover:bg-gray-800">Create</button>
+                    </form>
+                </div>
+                {/* Table Grid */}
+                <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {tables.map(t => (
+                        <div key={t._id} className={`relative p-4 rounded-xl border-2 ${t.status==='occupied'?'border-red-500 bg-red-50':'border-green-500 bg-white'} flex flex-col justify-between h-48 transition hover:shadow-md`}>
+                            {/* Header: Table No & Capacity */}
+                            <div className="flex justify-between items-start">
+                                <span className={`font-black text-3xl ${t.status==='occupied'?'text-red-600':'text-green-600'}`}>{t.tableNumber}</span>
+                                <span className="text-xs text-gray-400 flex items-center gap-1"><Users size={12}/> {t.capacity}</span>
+                            </div>
+
+                            {t.status === 'occupied' ? (
+                                <div>
+                                    <p className="text-[10px] text-red-400 uppercase font-bold tracking-widest mb-2">OCCUPIED</p>
+                                    
+                                    {/* --- Queue & Price Info (NEW) --- */}
+                                    {t.currentQueueId ? (
+                                        <div className="mb-3 bg-white/60 p-2 rounded-lg border border-red-100">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <span className="text-xs text-gray-500 font-bold uppercase">Queue</span>
+                                                <span className="text-lg font-black text-gray-800">
+                                                    #{String(t.currentQueueId.queueNumber).padStart(3, '0')}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between items-center border-t border-red-100 pt-1">
+                                                <span className="text-xs text-gray-500 font-bold uppercase">Total</span>
+                                                <span className="text-sm font-bold text-green-600">
+                                                    {t.currentQueueId.totalPrice.toLocaleString()} ฿
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="text-xs text-gray-400 mb-3">No Queue Data</p>
+                                    )}
+                                    {/* -------------------------------------- */}
+
+                                    <button onClick={()=>assignTable(t._id, null)} className="w-full py-2 bg-red-600 text-white text-xs rounded-lg font-bold hover:bg-red-700 shadow-sm transition transform active:scale-95">Check Bill</button>
+                                </div>
+                            ) : (
+                                <div>
+                                    <p className="text-[10px] text-green-400 uppercase font-bold tracking-widest mb-2">AVAILABLE</p>
+                                    {queueData.currentQueue ? (
+                                        <button onClick={()=>assignTable(t._id, queueData.currentQueue._id)} className="w-full py-2 bg-green-600 text-white text-xs rounded-lg font-bold hover:bg-green-700 shadow-sm transition transform active:scale-95">Assign Queue</button>
+                                    ) : <div className="w-full py-2 bg-gray-100 text-gray-400 text-xs rounded-lg font-bold text-center cursor-not-allowed">No Queue</div>}
+                                </div>
+                            )}
+                            
+                            {t.status !== 'occupied' && <button onClick={()=>deleteTable(t._id)} className="absolute top-2 right-2 text-gray-200 hover:text-red-400 transition"><Trash2 size={14}/></button>}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+
+        {/* --- TAB: SHIFT --- */}
+        {activeTab === 'shift' && role === 'admin' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in zoom-in duration-300">
+                <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+                    <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2"><Receipt size={24}/> Close Shift</h3>
+                    <div className="bg-gray-50 p-6 rounded-xl mb-6 text-center">
+                        <p className="text-gray-500 text-sm uppercase font-bold">System Total Today</p>
+                        <h2 className="text-5xl font-black text-gray-800 mt-2">{reports.daily?.totalRevenue?.toLocaleString()} ฿</h2>
+                    </div>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-sm font-bold text-gray-500">Cash in Drawer</label>
+                            <input type="number" className="w-full p-3 border rounded-xl text-xl font-bold" placeholder="0.00" value={cashInDrawer} onChange={e=>setCashInDrawer(e.target.value)}/>
+                        </div>
+                        <div>
+                            <label className="text-sm font-bold text-gray-500">Note</label>
+                            <textarea className="w-full p-3 border rounded-xl" placeholder="Remarks..." value={shiftNote} onChange={e=>setShiftNote(e.target.value)}></textarea>
+                        </div>
+                        <button onClick={closeShift} disabled={!cashInDrawer} className="w-full py-4 bg-red-600 text-white rounded-xl font-bold text-lg shadow-lg hover:bg-red-700 disabled:opacity-50">CLOSE SHIFT</button>
+                    </div>
+                </div>
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="p-4 bg-gray-50 border-b font-bold text-gray-700">Shift History</div>
+                    <div className="overflow-y-auto max-h-[500px]">
+                        <table className="w-full text-left text-sm">
+                            <thead className="bg-white text-gray-400 border-b uppercase"><tr><th className="p-4">Date</th><th className="p-4">By</th><th className="p-4 text-right">System</th><th className="p-4 text-right">Actual</th><th className="p-4 text-right">Diff</th></tr></thead>
+                            <tbody>
+                                {shifts.map(s => (
+                                    <tr key={s._id} className="hover:bg-gray-50">
+                                        <td className="p-4">{new Date(s.date).toLocaleDateString('th-TH')}</td>
+                                        <td className="p-4">{s.closedBy?.username}</td>
+                                        <td className="p-4 text-right">{s.systemTotal.toLocaleString()}</td>
+                                        <td className="p-4 text-right">{s.cashInDrawer.toLocaleString()}</td>
+                                        <td className={`p-4 text-right font-bold ${s.variance < 0 ? 'text-red-600' : s.variance > 0 ? 'text-green-600' : 'text-gray-400'}`}>{s.variance > 0 ? '+' : ''}{s.variance.toLocaleString()}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         )}
 
         {/* --- TAB: WORKER TIME CLOCK --- */}
@@ -449,7 +633,7 @@ export default function AdminPage() {
             </div>
         )}
 
-        {/* --- TAB: STAFF MANAGEMENT (Admin) [REDESIGNED] --- */}
+        {/* --- TAB: STAFF MANAGEMENT (Admin) --- */}
         {activeTab === 'users' && role === 'admin' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
