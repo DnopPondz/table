@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const http = require('http');
 const { Server } = require('socket.io');
+const cron = require('node-cron');
 
 const Attendance = require('./models/Attendance');
 const Queue = require('./models/Queue');
@@ -63,6 +64,22 @@ const initSettings = async () => {
     console.error('Error initializing settings:', error);
   }
 };
+
+// --- CRON JOBS ---
+cron.schedule('* * * * *', async () => {
+  try {
+    const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
+    const result = await Attendance.updateMany(
+      { status: 'working', checkIn: { $lte: eightHoursAgo } },
+      { $set: { status: 'completed', checkOut: new Date() } }
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`Auto-checkout: ${result.modifiedCount} users clocked out.`);
+    }
+  } catch (err) {
+    console.error('Auto-checkout error:', err);
+  }
+});
 
 // --- HELPERS ---
 const getTodayDateStr = () => {
