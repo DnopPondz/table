@@ -33,7 +33,10 @@ export default function AdminPage() {
   
   // **NEW: Table Management Data**
   const [tables, setTables] = useState([]);
+  const [reservations, setReservations] = useState([]); // NEW
   const [newTable, setNewTable] = useState({ tableNumber: '', capacity: 4 });
+  const [newRes, setNewRes] = useState({ customerName: '', customerPhone: '', reservationTime: '', pax: 2, tableId: '' }); // NEW
+  const [showResForm, setShowResForm] = useState(false); // NEW
   
   // **NEW: Shift Data**
   const [shifts, setShifts] = useState([]);
@@ -140,7 +143,7 @@ export default function AdminPage() {
     
     // Initial Fetch
     fetchQueue(); 
-    if (activeTab === 'tables') fetchTables();
+    if (activeTab === 'tables') { fetchTables(); fetchReservations(); }
     if (activeTab === 'shift') { fetchReports(); fetchShifts(); }
     if (activeTab === 'logs') fetchLogs(); 
     if (activeTab === 'users' && !editingId) fetchStaffStatus(); 
@@ -153,6 +156,7 @@ export default function AdminPage() {
         setQueueData({ currentQueue: data.currentQueue, waitingQueues: data.waitingQueues || [] });
       }
       if (data.tables) setTables(data.tables);
+      if (data.reservations) setReservations(data.reservations); // NEW
     });
 
     return () => socket.disconnect();
@@ -186,6 +190,7 @@ export default function AdminPage() {
   // --- API Fetchers ---
   const fetchQueue = async () => { try { const res = await axios.get(`${API_URL}/queue`); setQueueData(res.data); } catch (e) { console.error(e); } };
   const fetchTables = async () => { try { const res = await axios.get(`${API_URL}/tables`); setTables(res.data); } catch (e) { console.error(e); } };
+  const fetchReservations = async () => { try { const res = await axios.get(`${API_URL}/reservations`, authHeaders); setReservations(res.data); } catch (e) { console.error(e); } }; // NEW
   const fetchReports = async () => { try { const res = await axios.get(`${API_URL}/reports`, authHeaders); setReports(res.data); } catch (e) { checkAuthError(e); } };
   const fetchShifts = async () => { try { const res = await axios.get(`${API_URL}/shift/history`, authHeaders); setShifts(res.data); } catch (e) { checkAuthError(e); } };
   const fetchLogs = async () => { try { const res = await axios.get(`${API_URL}/logs?date=${formatDateForAPI(logDate)}`, authHeaders); setLogs(res.data); } catch (e) { checkAuthError(e); } };
@@ -276,6 +281,21 @@ export default function AdminPage() {
   };
   const deleteTable = async (id) => {
     if(confirm('Delete Table?')) try { await axios.delete(`${API_URL}/tables/${id}`, authHeaders); fetchTables(); } catch(e){}
+  };
+
+  // Reservation Actions
+  const createReservation = async (e) => {
+    e.preventDefault();
+    try { await axios.post(`${API_URL}/reservations`, newRes, authHeaders); setShowResForm(false); setNewRes({customerName:'', customerPhone:'', reservationTime:'', pax:2, tableId:''}); fetchReservations(); alert('Reservation Added'); }
+    catch(e) { alert('Error'); }
+  };
+  const cancelReservation = async (id) => {
+    if(!confirm('Cancel this reservation?')) return;
+    try { await axios.put(`${API_URL}/reservations/${id}/cancel`, {}, authHeaders); fetchReservations(); } catch(e){ alert('Error'); }
+  };
+  const checkInReservation = async (id) => {
+    if(!confirm('Check In Customer? This will occupy the table.')) return;
+    try { await axios.put(`${API_URL}/reservations/${id}/checkin`, {}, authHeaders); fetchReservations(); fetchTables(); } catch(e){ alert(e.response?.data?.message || 'Error'); }
   };
 
   // Shift Actions
@@ -502,67 +522,128 @@ export default function AdminPage() {
             </>
         )}
 
-        {/* --- TAB: TABLES (UPDATED UI) --- */}
+        {/* --- TAB: TABLES & RESERVATIONS (UPDATED UI) --- */}
         {activeTab === 'tables' && role === 'admin' && (
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 animate-in fade-in zoom-in duration-300">
-                {/* Create Table */}
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-fit">
-                    <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2"><Plus size={20}/> New Table</h3>
-                    <form onSubmit={createTable} className="space-y-4">
-                        <input className="w-full p-2 border rounded-lg bg-gray-50" placeholder="Table No. (e.g. T1)" value={newTable.tableNumber} onChange={e=>setNewTable({...newTable, tableNumber:e.target.value})} required/>
-                        <input type="number" className="w-full p-2 border rounded-lg bg-gray-50" placeholder="Capacity" value={newTable.capacity} onChange={e=>setNewTable({...newTable, capacity:e.target.value})} required/>
-                        <button className="w-full py-2 bg-black text-white rounded-lg font-bold hover:bg-gray-800">Create</button>
-                    </form>
-                </div>
-                {/* Table Grid */}
-                <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {tables.map(t => (
-                        <div key={t._id} className={`relative p-4 rounded-xl border-2 ${t.status==='occupied'?'border-red-500 bg-red-50':'border-green-500 bg-white'} flex flex-col justify-between h-48 transition hover:shadow-md`}>
-                            {/* Header: Table No & Capacity */}
-                            <div className="flex justify-between items-start">
-                                <span className={`font-black text-3xl ${t.status==='occupied'?'text-red-600':'text-green-600'}`}>{t.tableNumber}</span>
-                                <span className="text-xs text-gray-400 flex items-center gap-1"><Users size={12}/> {t.capacity}</span>
-                            </div>
+                {/* Left Column: Create Table & Reservations List */}
+                <div className="space-y-6">
+                    {/* Create Table */}
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 h-fit">
+                        <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2"><Plus size={20}/> New Table</h3>
+                        <form onSubmit={createTable} className="space-y-4">
+                            <input className="w-full p-2 border rounded-lg bg-gray-50" placeholder="Table No. (e.g. T1)" value={newTable.tableNumber} onChange={e=>setNewTable({...newTable, tableNumber:e.target.value})} required/>
+                            <input type="number" className="w-full p-2 border rounded-lg bg-gray-50" placeholder="Capacity" value={newTable.capacity} onChange={e=>setNewTable({...newTable, capacity:e.target.value})} required/>
+                            <button className="w-full py-2 bg-black text-white rounded-lg font-bold hover:bg-gray-800">Create</button>
+                        </form>
+                    </div>
 
-                            {t.status === 'occupied' ? (
-                                <div>
-                                    <p className="text-[10px] text-red-400 uppercase font-bold tracking-widest mb-2">OCCUPIED</p>
-                                    
-                                    {/* --- Queue & Price Info (NEW) --- */}
-                                    {t.currentQueueId ? (
-                                        <div className="mb-3 bg-white/60 p-2 rounded-lg border border-red-100">
-                                            <div className="flex justify-between items-center mb-1">
-                                                <span className="text-xs text-gray-500 font-bold uppercase">Queue</span>
-                                                <span className="text-lg font-black text-gray-800">
-                                                    #{String(t.currentQueueId.queueNumber).padStart(3, '0')}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between items-center border-t border-red-100 pt-1">
-                                                <span className="text-xs text-gray-500 font-bold uppercase">Total</span>
-                                                <span className="text-sm font-bold text-green-600">
-                                                    {t.currentQueueId.totalPrice.toLocaleString()} ฿
-                                                </span>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <p className="text-xs text-gray-400 mb-3">No Queue Data</p>
-                                    )}
-                                    {/* -------------------------------------- */}
-
-                                    <button onClick={()=>assignTable(t._id, null)} className="w-full py-2 bg-red-600 text-white text-xs rounded-lg font-bold hover:bg-red-700 shadow-sm transition transform active:scale-95">Check Bill</button>
-                                </div>
-                            ) : (
-                                <div>
-                                    <p className="text-[10px] text-green-400 uppercase font-bold tracking-widest mb-2">AVAILABLE</p>
-                                    {queueData.currentQueue ? (
-                                        <button onClick={()=>assignTable(t._id, queueData.currentQueue._id)} className="w-full py-2 bg-green-600 text-white text-xs rounded-lg font-bold hover:bg-green-700 shadow-sm transition transform active:scale-95">Assign Queue</button>
-                                    ) : <div className="w-full py-2 bg-gray-100 text-gray-400 text-xs rounded-lg font-bold text-center cursor-not-allowed">No Queue</div>}
-                                </div>
-                            )}
-                            
-                            {t.status !== 'occupied' && <button onClick={()=>deleteTable(t._id)} className="absolute top-2 right-2 text-gray-200 hover:text-red-400 transition"><Trash2 size={14}/></button>}
+                    {/* Reservations Card */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                        <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
+                            <h3 className="font-bold text-gray-700 flex items-center gap-2"><CalendarIcon size={16}/> Reservations</h3>
+                            <button onClick={()=>setShowResForm(!showResForm)} className="text-xs bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">{showResForm?'Cancel':'+ New'}</button>
                         </div>
-                    ))}
+
+                        {/* New Reservation Form */}
+                        {showResForm && (
+                            <form onSubmit={createReservation} className="p-4 border-b bg-gray-50 space-y-2">
+                                <input className="w-full p-2 border rounded text-xs" placeholder="Name" value={newRes.customerName} onChange={e=>setNewRes({...newRes, customerName:e.target.value})} required/>
+                                <input className="w-full p-2 border rounded text-xs" placeholder="Phone" value={newRes.customerPhone} onChange={e=>setNewRes({...newRes, customerPhone:e.target.value})}/>
+                                <input className="w-full p-2 border rounded text-xs" type="datetime-local" value={newRes.reservationTime} onChange={e=>setNewRes({...newRes, reservationTime:e.target.value})} required/>
+                                <div className="flex gap-2">
+                                    <input className="w-1/2 p-2 border rounded text-xs" type="number" placeholder="Pax" value={newRes.pax} onChange={e=>setNewRes({...newRes, pax:e.target.value})} required/>
+                                    <select className="w-1/2 p-2 border rounded text-xs" value={newRes.tableId} onChange={e=>setNewRes({...newRes, tableId:e.target.value})}>
+                                        <option value="">Any Table</option>
+                                        {tables.map(t => <option key={t._id} value={t._id}>{t.tableNumber} ({t.capacity})</option>)}
+                                    </select>
+                                </div>
+                                <button className="w-full py-2 bg-red-600 text-white rounded text-xs font-bold">Save Reservation</button>
+                            </form>
+                        )}
+
+                        {/* Reservation List */}
+                        <div className="max-h-[400px] overflow-y-auto divide-y divide-gray-100">
+                            {reservations.length === 0 && <p className="p-4 text-xs text-gray-400 text-center">No upcoming reservations</p>}
+                            {reservations.map(r => (
+                                <div key={r._id} className="p-4 hover:bg-gray-50">
+                                    <div className="flex justify-between items-start mb-1">
+                                        <span className="font-bold text-gray-800 text-sm">{r.customerName}</span>
+                                        <span className="text-xs font-bold text-red-500 bg-red-50 px-2 rounded-full">{new Date(r.reservationTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                    </div>
+                                    <div className="text-xs text-gray-500 mb-2">
+                                        {new Date(r.reservationTime).toDateString()} • {r.pax} Pax • {r.tableId ? `Table ${r.tableId.tableNumber}` : 'No Table'}
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={()=>checkInReservation(r._id)} className="flex-1 py-1 bg-green-100 text-green-700 rounded text-xs font-bold hover:bg-green-200">Check In</button>
+                                        <button onClick={()=>cancelReservation(r._id)} className="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs hover:bg-gray-200"><X size={14}/></button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Right Column: Table Grid */}
+                <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 content-start">
+                    {tables.map(t => {
+                        // Check if this table has an UPCOMING reservation today (pending)
+                        const upcomingRes = reservations.find(r => r.tableId && r.tableId._id === t._id && r.status === 'pending');
+
+                        return (
+                            <div key={t._id} className={`relative p-4 rounded-xl border-2 ${t.status==='occupied'?'border-red-500 bg-red-50':'border-green-500 bg-white'} flex flex-col justify-between h-48 transition hover:shadow-md`}>
+                                {/* Header: Table No & Capacity */}
+                                <div className="flex justify-between items-start">
+                                    <span className={`font-black text-3xl ${t.status==='occupied'?'text-red-600':'text-green-600'}`}>{t.tableNumber}</span>
+                                    <span className="text-xs text-gray-400 flex items-center gap-1"><Users size={12}/> {t.capacity}</span>
+                                </div>
+
+                                {/* Reservation Badge */}
+                                {upcomingRes && t.status !== 'occupied' && (
+                                    <div className="absolute top-2 right-8 bg-orange-100 text-orange-600 px-2 py-0.5 rounded text-[10px] font-bold border border-orange-200 flex items-center gap-1">
+                                        <Clock size={10}/> {new Date(upcomingRes.reservationTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                    </div>
+                                )}
+
+                                {t.status === 'occupied' ? (
+                                    <div>
+                                        <p className="text-[10px] text-red-400 uppercase font-bold tracking-widest mb-2">OCCUPIED</p>
+
+                                        {/* --- Queue & Price Info (NEW) --- */}
+                                        {t.currentQueueId ? (
+                                            <div className="mb-3 bg-white/60 p-2 rounded-lg border border-red-100">
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <span className="text-xs text-gray-500 font-bold uppercase">Queue</span>
+                                                    <span className="text-lg font-black text-gray-800">
+                                                        #{String(t.currentQueueId.queueNumber).padStart(3, '0')}
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between items-center border-t border-red-100 pt-1">
+                                                    <span className="text-xs text-gray-500 font-bold uppercase">Total</span>
+                                                    <span className="text-sm font-bold text-green-600">
+                                                        {t.currentQueueId.totalPrice.toLocaleString()} ฿
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <p className="text-xs text-gray-400 mb-3">No Queue Data</p>
+                                        )}
+                                        {/* -------------------------------------- */}
+
+                                        <button onClick={()=>assignTable(t._id, null)} className="w-full py-2 bg-red-600 text-white text-xs rounded-lg font-bold hover:bg-red-700 shadow-sm transition transform active:scale-95">Check Bill</button>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <p className="text-[10px] text-green-400 uppercase font-bold tracking-widest mb-2">AVAILABLE</p>
+                                        {queueData.currentQueue ? (
+                                            <button onClick={()=>assignTable(t._id, queueData.currentQueue._id)} className="w-full py-2 bg-green-600 text-white text-xs rounded-lg font-bold hover:bg-green-700 shadow-sm transition transform active:scale-95">Assign Queue</button>
+                                        ) : <div className="w-full py-2 bg-gray-100 text-gray-400 text-xs rounded-lg font-bold text-center cursor-not-allowed">No Queue</div>}
+                                    </div>
+                                )}
+
+                                {t.status !== 'occupied' && <button onClick={()=>deleteTable(t._id)} className="absolute top-2 right-2 text-gray-200 hover:text-red-400 transition"><Trash2 size={14}/></button>}
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
         )}
