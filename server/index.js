@@ -6,9 +6,11 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const http = require('http');
 const { Server } = require('socket.io');
+const cron = require('node-cron');
 
 const Attendance = require('./models/Attendance');
 const Queue = require('./models/Queue');
+const Reservation = require('./models/Reservation');
 const User = require('./models/User');
 const Table = require('./models/Table');
 const Shift = require('./models/Shift');
@@ -64,6 +66,22 @@ const initSettings = async () => {
   }
 };
 
+// --- CRON JOBS ---
+cron.schedule('* * * * *', async () => {
+  try {
+    const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
+    const result = await Attendance.updateMany(
+      { status: 'working', checkIn: { $lte: eightHoursAgo } },
+      { $set: { status: 'completed', checkOut: new Date() } }
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`Auto-checkout: ${result.modifiedCount} users clocked out.`);
+    }
+  } catch (err) {
+    console.error('Auto-checkout error:', err);
+  }
+});
+
 // --- HELPERS ---
 const getTodayDateStr = () => {
   const date = new Date();
@@ -73,8 +91,22 @@ const getTodayDateStr = () => {
 };
 
 const getTodayRange = () => {
-  const start = new Date(); start.setHours(0, 0, 0, 0);
-  const end = new Date(); end.setHours(23, 59, 59, 999);
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour12: false
+  });
+  const parts = formatter.formatToParts(now);
+  const getPart = (type) => parts.find(p => p.type === type).value;
+  const year = getPart('year');
+  const month = getPart('month');
+  const day = getPart('day');
+
+  const start = new Date(`${year}-${month}-${day}T00:00:00.000+07:00`);
+  const end = new Date(`${year}-${month}-${day}T23:59:59.999+07:00`);
   return { start, end };
 };
 
@@ -93,7 +125,15 @@ const broadcastUpdate = async () => {
   // *** UPDATED: Populate Queue Info ***
   const tables = await Table.find().sort({ tableNumber: 1 }).populate('currentQueueId');
 
-  io.emit('update-data', { currentQueue, waitingQueues, totalToday, tables });
+  // *** NEW: Broadcast Reservations ***
+  // Get upcoming pending reservations (e.g. from now until end of day, or just all future pending)
+  const now = new Date();
+  const reservations = await Reservation.find({
+    status: 'pending',
+    reservationTime: { $gte: now } // Only future or current pending
+  }).sort({ reservationTime: 1 }).populate('tableId');
+
+  io.emit('update-data', { currentQueue, waitingQueues, totalToday, tables, reservations });
 };
 
 // --- MIDDLEWARE ---
@@ -226,6 +266,84 @@ app.delete('/api/tables/:id', authMiddleware, async (req, res) => {
     await Table.findByIdAndDelete(req.params.id);
     broadcastUpdate();
     res.json({ message: "Deleted" });
+});
+
+// --- RESERVATIONS ---
+app.get('/api/reservations', authMiddleware, async (req, res) => {
+    const now = new Date();
+    // Get all pending future/today or past (if not cancelled/completed)?
+    // Let's just get pending ones for now for the list
+    const reservations = await Reservation.find({
+        status: 'pending',
+        reservationTime: { $gte: new Date(now.setHours(0,0,0,0)) }
+    }).sort({ reservationTime: 1 }).populate('tableId');
+    res.json(reservations);
+});
+
+app.post('/api/reservations', authMiddleware, async (req, res) => {
+    try {
+        const { customerName, customerPhone, reservationTime, pax, tableId } = req.body;
+        // Fix: Handle empty tableId to avoid CastError
+        const reservationData = { customerName, customerPhone, reservationTime, pax };
+        if (tableId) reservationData.tableId = tableId;
+
+        const newRes = new Reservation(reservationData);
+        await newRes.save();
+
+        // Optionally update table status to 'reserved' if it's close?
+        // For now, let's just save.
+
+        broadcastUpdate();
+        res.json(newRes);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/reservations/:id/cancel', authMiddleware, async (req, res) => {
+    await Reservation.findByIdAndUpdate(req.params.id, { status: 'cancelled' });
+    broadcastUpdate();
+    res.json({ message: "Cancelled" });
+});
+
+app.put('/api/reservations/:id/checkin', authMiddleware, async (req, res) => {
+    try {
+        const reservation = await Reservation.findById(req.params.id);
+        if (!reservation) return res.status(404).json({ message: "Not found" });
+        if (reservation.status !== 'pending') return res.status(400).json({ message: "Not pending" });
+
+        // 1. Create a Queue for this reservation (Immediate seating)
+        // Find Price
+        const priceSetting = await Setting.findOne({ key: 'pricePerHead' });
+        const pricePerHead = priceSetting ? parseFloat(priceSetting.value) : 399;
+
+        // Generate a queue number (maybe distinct? or just next available)
+        // Let's use the normal sequence but status 'seated'
+        const { start, end } = getTodayRange();
+        const lastQueue = await Queue.findOne({ createdAt: { $gte: start, $lt: end } }).sort({ queueNumber: -1 });
+        const nextNumber = lastQueue ? lastQueue.queueNumber + 1 : 1;
+
+        const newQueue = new Queue({
+            queueNumber: nextNumber,
+            customerCount: reservation.pax,
+            totalPrice: reservation.pax * pricePerHead,
+            status: 'seated'
+        });
+        await newQueue.save();
+
+        // 2. Update Table
+        if (reservation.tableId) {
+            await Table.findByIdAndUpdate(reservation.tableId, {
+                status: 'occupied',
+                currentQueueId: newQueue._id
+            });
+        }
+
+        // 3. Update Reservation
+        reservation.status = 'checked-in';
+        await reservation.save();
+
+        broadcastUpdate();
+        res.json({ message: "Checked In", queue: newQueue });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // --- SHIFT ---
