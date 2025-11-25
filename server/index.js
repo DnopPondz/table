@@ -73,8 +73,22 @@ const getTodayDateStr = () => {
 };
 
 const getTodayRange = () => {
-  const start = new Date(); start.setHours(0, 0, 0, 0);
-  const end = new Date(); end.setHours(23, 59, 59, 999);
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour12: false
+  });
+  const parts = formatter.formatToParts(now);
+  const getPart = (type) => parts.find(p => p.type === type).value;
+  const year = getPart('year');
+  const month = getPart('month');
+  const day = getPart('day');
+
+  const start = new Date(`${year}-${month}-${day}T00:00:00.000+07:00`);
+  const end = new Date(`${year}-${month}-${day}T23:59:59.999+07:00`);
   return { start, end };
 };
 
