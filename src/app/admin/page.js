@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { io } from 'socket.io-client'; // เพิ่ม Socket.io
+import QRCode from 'qrcode';
 import { 
   User, Shield, Users, Bell, CheckCircle, XCircle, LogOut, Lock, Unlock, 
   LayoutDashboard, List, UserPlus, Trash2, DollarSign, TrendingUp, 
@@ -98,28 +99,61 @@ export default function AdminPage() {
   };
 
   // **NEW: Print Ticket Function**
-  const printQueueTicket = (queue) => {
-    const printWindow = window.open('', '', 'width=300,height=400');
+  const printQueueTicket = async (queue) => {
+    // Generate QR Code
+    const qrText = `${window.location.origin}/queue/status/${queue._id}`;
+    let qrDataUrl = '';
+    try {
+        qrDataUrl = await QRCode.toDataURL(qrText, { width: 100, margin: 0 });
+    } catch (err) {
+        console.error(err);
+    }
+
+    const printWindow = window.open('', '', 'width=300,height=600');
     printWindow.document.write(`
       <html>
         <head>
           <title>Queue Ticket</title>
           <style>
-            body { font-family: monospace; text-align: center; padding: 20px; }
-            h1 { font-size: 40px; margin: 0; }
-            p { margin: 5px 0; font-size: 14px; }
-            .date { font-size: 10px; margin-top: 20px; color: #666; }
+            @page { margin: 0; size: 58mm auto; }
+            body {
+                margin: 0;
+                padding: 5mm;
+                width: 48mm; /* 58mm - margins */
+                font-family: 'Courier New', monospace;
+                text-align: center;
+                color: black;
+                background: white;
+            }
+            h1 { font-size: 32px; margin: 10px 0; font-weight: 900; }
+            h2 { font-size: 16px; margin: 5px 0; font-weight: bold; text-transform: uppercase; }
+            p { margin: 2px 0; font-size: 12px; }
+            .divider { border-top: 1px dashed black; margin: 10px 0; width: 100%; }
+            .qr-container { margin: 15px 0; display: flex; justify-content: center; }
+            .footer { font-size: 10px; margin-top: 15px; }
+            img { display: block; margin: 0 auto; }
           </style>
         </head>
         <body>
-          <p>Welcome to Buffet</p>
-          <p>YOUR QUEUE NUMBER</p>
+          <h2>Buffet POS</h2>
+          <div class="divider"></div>
+          <p>QUEUE NUMBER</p>
           <h1>#${String(queue.queueNumber).padStart(3, '0')}</h1>
           <p>${queue.customerCount} Person(s)</p>
-          <p class="date">${new Date().toLocaleString('th-TH')}</p>
+          <div class="divider"></div>
+
+          <div class="qr-container">
+            <img src="${qrDataUrl}" width="100" height="100" />
+          </div>
+          <p>Scan to check status</p>
+
+          <div class="divider"></div>
+          <p class="footer">${new Date().toLocaleString('th-TH')}</p>
           <script>
-            window.print();
-            window.close();
+            window.onload = function() {
+                window.print();
+                setTimeout(function(){ window.close(); }, 500);
+            }
           </script>
         </body>
       </html>

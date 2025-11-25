@@ -7,9 +7,7 @@ const jwt = require('jsonwebtoken');
 const http = require('http');
 const { Server } = require('socket.io');
 const cron = require('node-cron');
-
 const rateLimit = require('express-rate-limit');
-
 
 const Attendance = require('./models/Attendance');
 const Queue = require('./models/Queue');
