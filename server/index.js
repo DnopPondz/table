@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const http = require('http');
 const { Server } = require('socket.io');
+const cron = require('node-cron');
 
 const Attendance = require('./models/Attendance');
 const Queue = require('./models/Queue');
@@ -64,6 +65,22 @@ const initSettings = async () => {
   }
 };
 
+// --- CRON JOBS ---
+cron.schedule('* * * * *', async () => {
+  try {
+    const eightHoursAgo = new Date(Date.now() - 8 * 60 * 60 * 1000);
+    const result = await Attendance.updateMany(
+      { status: 'working', checkIn: { $lte: eightHoursAgo } },
+      { $set: { status: 'completed', checkOut: new Date() } }
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`Auto-checkout: ${result.modifiedCount} users clocked out.`);
+    }
+  } catch (err) {
+    console.error('Auto-checkout error:', err);
+  }
+});
+
 // --- HELPERS ---
 const getTodayDateStr = () => {
   const date = new Date();
@@ -73,8 +90,22 @@ const getTodayDateStr = () => {
 };
 
 const getTodayRange = () => {
-  const start = new Date(); start.setHours(0, 0, 0, 0);
-  const end = new Date(); end.setHours(23, 59, 59, 999);
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour12: false
+  });
+  const parts = formatter.formatToParts(now);
+  const getPart = (type) => parts.find(p => p.type === type).value;
+  const year = getPart('year');
+  const month = getPart('month');
+  const day = getPart('day');
+
+  const start = new Date(`${year}-${month}-${day}T00:00:00.000+07:00`);
+  const end = new Date(`${year}-${month}-${day}T23:59:59.999+07:00`);
   return { start, end };
 };
 

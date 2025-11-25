@@ -166,12 +166,7 @@ export default function AdminPage() {
             const now = new Date().getTime();
             const checkInTime = new Date(myAttendance.checkIn).getTime();
             const diff = now - checkInTime;
-            if (diff >= 28800000) {
-                handleAutoCheckout();
-                clearInterval(timerInterval);
-            } else {
-                setWorkDuration(msToTimeHTML(diff));
-            }
+            setWorkDuration(msToTimeHTML(diff));
         }, 1000);
     } else {
         setWorkDuration("0h 0m 0s");
