@@ -8,6 +8,9 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cron = require('node-cron');
 
+const rateLimit = require('express-rate-limit');
+
+
 const Attendance = require('./models/Attendance');
 const Queue = require('./models/Queue');
 const Reservation = require('./models/Reservation');
@@ -17,15 +20,39 @@ const Shift = require('./models/Shift');
 const Setting = require('./models/Setting');
 
 dotenv.config();
+
+// --- ENV VALIDATION ---
+if (!process.env.MONGO_URI) {
+  throw new Error("FATAL ERROR: MONGO_URI is not defined.");
+}
+if (!process.env.JWT_SECRET) {
+  throw new Error("FATAL ERROR: JWT_SECRET is not defined.");
+}
+
 const app = express();
 
-app.use(cors());
+const corsOptions = {
+  origin: process.env.CLIENT_URL || "http://localhost:3000",
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
+
+// --- RATE LIMITING ---
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Limit each IP to 10 login requests per windowMs
+  message: "Too many login attempts from this IP, please try again after 15 minutes"
+});
 
 // --- SERVER & SOCKET SETUP ---
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] }
+  cors: {
+    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    methods: ["GET", "POST", "PUT", "DELETE"]
+  }
 });
 
 io.on('connection', (socket) => {
@@ -35,7 +62,7 @@ io.on('connection', (socket) => {
 
 // --- CONFIGURATION ---
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || "buffet_secret_key_123"; 
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // --- DATABASE ---
 mongoose.connect(process.env.MONGO_URI)
@@ -368,11 +395,19 @@ app.get('/api/shift/history', authMiddleware, async (req, res) => {
 });
 
 // --- AUTH & USERS & ATTENDANCE & LOGS ---
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
     try {
       const { username, password } = req.body;
+      // Input Validation
+      if (!username || typeof username !== 'string' || !username.trim()) {
+        return res.status(400).json({ message: "Invalid username" });
+      }
+      if (!password || typeof password !== 'string' || !password.trim()) {
+        return res.status(400).json({ message: "Invalid password" });
+      }
+
       const user = await User.findOne({ username });
-      if (!user || !(await bcrypt.compare(password, user.password))) return res.status(400).json({ message: "Invalid" });
+      if (!user || !(await bcrypt.compare(password, user.password))) return res.status(400).json({ message: "Invalid credentials" });
       const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
       res.json({ token, role: user.role, username: user.username });
     } catch (err) { res.status(500).json({ error: err.message }); }
